@@ -19,44 +19,42 @@ def accept(sock, mask):
     conn.setblocking(False)
     sel.register(conn, selectors.EVENT_READ, read_packet)
 
+    # register new item in players dictionary, but without any information about where they are yet until they send us it
+    players[conn.getpeername()] = {"con": conn, "info": False}
+    # send event letting people know I exist
+    # register myself to find out when new people join
+
+def disconnect_client(conn):
+    players.pop(conn.getpeername())
+    print("Client disconnected:", conn)
+    sel.unregister(conn)
+    conn.close()
+    return
 
 def read_packet(conn, mask):
     try:
         data = conn.recv(1000)
     except (ConnectionResetError, ConnectionAbortedError, ConnectionError) as e:
-        try:
-            players.pop(conn.getpeername())
-        except:
-            pass
-        print("Client disconnected:", conn)
-        sel.unregister(conn)
-        conn.close()
+        disconnect_client(conn)
         return
 
     # TODO: Do we need this line now that we check for exceptions?
     if not data:
-        try:
-            players.pop(conn.getpeername())
-        except:
-            pass
-        print("Client disconnected:", conn)
-        print(conn.getpeername())
-        sel.unregister(conn)
-        conn.close()
+        disconnect_client(conn)
         return
+
+    # We may have gotten more than one message from the client. For now, lets just take the latest one
+    # TODO: When we support more than just position updates, we may need to read every message, not just the latest
+    data = data.decode('utf-8')
+    data = data.split("\n")[-2]
 
     # Parse the information as JSON and store it so we can serve it to clients later
     try:
-        d = json.loads(data.decode('utf-8'))
+        d = json.loads(data)
     except:
-        try:
-            players.pop(conn.getpeername())
-        except:
-            pass
         print("Invalid data from client!")
         print(data)
-        sel.unregister(conn)
-        conn.close()
+        disconnect_client(conn)
         return
 
     if len(d) != 1:
@@ -71,22 +69,30 @@ def read_packet(conn, mask):
         return
 
     # TODO: Check if the player name is already in use -- no duplicates!!!!
-    players[conn.getpeername()] = d[0]
+    if d[0] == players[conn.getpeername()]["info"]:
+        # A client sent us data but they haven't moved!
+        return
 
-    # Send new information to the client about the position of all players (except the current player)
-    data_to_send = []
+    # Update the players position and let every client know about it :)
+    players[conn.getpeername()]["info"] = d[0]
+    notify_clients()
 
-    for _, value in players.items():
-        # Ignore self
-        if value == d[0]:
-            continue
 
-        data_to_send.append(value)
+def notify_clients():
+    print("updating positions")
+    for _, player in players.items():
+        # Send new information to the client about the position of all players (except the current player)
+        data_to_send = []
 
-    data = json.dumps(data_to_send).encode()
-    print(data)
-    conn.send(data)
+        for _, value in players.items():
+            # Ignore self
+            if value["con"] == player["con"]:
+                continue
+            if value["info"]:
+                data_to_send.append(value["info"])
 
+        data = json.dumps(data_to_send).encode()
+        player["con"].send(data + b"\n")
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.bind((HOST, PORT))
