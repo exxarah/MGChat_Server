@@ -157,6 +157,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.bind((HOST, PORT))
     s.listen(100)
     s.setblocking(False)
+    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     sel.register(s, selectors.EVENT_READ, accept)
 
     while True:
