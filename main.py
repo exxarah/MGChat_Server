@@ -20,7 +20,7 @@ def accept(sock, mask):
     sel.register(conn, selectors.EVENT_READ, read_packet)
 
     # register new item in players dictionary, but without any information about where they are yet until they send us it
-    players[conn.getpeername()] = {"con": conn, "registered": False, "net_id": None, "position": None, "partial_data": b""}
+    players[conn.getpeername()] = {"con": conn, "registered": False, "net_id": None, "position": None, "partial_data": b"", "direction": None, "state": None}
 
 def disconnect_client(conn):
     try:
@@ -92,6 +92,14 @@ def parse_message_from_client(conn, data, peer):
         handle_movement(conn, client_command, peer)
         return
 
+    if client_command['$type'] == 'MGChat.Commands.ChangeDirectionCommand, MGChat':
+        handle_direction(conn, client_command, peer)
+        return
+
+    if client_command['$type'] == 'MGChat.Commands.ChangeStateCommand, MGChat':
+        handle_state(conn, client_command, peer)
+        return
+
     print("Invalid command type received from client. Disconnecting them")
     print(client_command)
     disconnect_client(conn)
@@ -136,6 +144,54 @@ def handle_movement(conn, setPositionCommand, peer):
     server_command = {
         '$type': 'MGChat.Commands.SetRemotePositionCommand, MGChat',
         'Position': setPositionCommand['Position'],
+        'NetId': players[peer]["net_id"]
+    }
+
+    notify_clients(conn, server_command)
+
+def handle_direction(conn, setDirectionCommand, peer):
+    # Check they are registered before handling their direction
+    if not players[peer]["registered"]:
+        print("Client attempted to set a position before registration")
+        disconnect_client(conn)
+        return
+
+    # Check whether their direction is different. If not, we can bail out early!
+    if setDirectionCommand['Direction'] == players[peer]["direction"]:
+        print("A client sent us a direction, but they haven't changed direction! Client bug?")
+        return
+
+    players[peer]["direction"] = setDirectionCommand['Direction']
+
+    # We now need to let every client know that this person has changed direction
+    # We can construct some raw JSON that pretends to be a real C# object
+    server_command = {
+        '$type': 'MGChat.Commands.SetRemoteDirectionCommand, MGChat',
+        'Direction': setDirectionCommand['Direction'],
+        'NetId': players[peer]["net_id"]
+    }
+
+    notify_clients(conn, server_command)
+
+def handle_state(conn, setStateCommand, peer):
+    # Check they are registered before handling their direction
+    if not players[peer]["registered"]:
+        print("Client attempted to set a position before registration")
+        disconnect_client(conn)
+        return
+
+    # Check whether their direction is different. If not, we can bail out early!
+    if setStateCommand['State'] == players[peer]["state"]:
+        print("A client sent us a new state, but they haven't changed state! Client bug?")
+        return
+
+    players[peer]["state"] = setStateCommand['State']
+
+    # We now need to let every client know that this person has changed direction
+    # We can construct some raw JSON that pretends to be a real C# object
+    server_command = {
+        '$type': 'MGChat.Commands.SetRemoteStateCommand, MGChat',
+        'State': setStateCommand['State'],
         'NetId': players[peer]["net_id"]
     }
 
